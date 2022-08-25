@@ -3596,3 +3596,129 @@ define_recv_packets!(
         TimSvin,
     }
 );
+
+#[derive(Debug, Clone)]
+pub enum ParseError<'b> {
+  /// Header is invalid.
+  ///
+  /// To get the position of the next sync byte, call [`next_sync`](ParseError::next_sync).
+  InvalidHeader { buf: &'b [u8] },
+  /// Packet needs more bytes to be completed.
+  Incomplete { bytes_needed: usize },
+  /// Checksum is invalid.
+  ///
+  /// To get the position of the next sync byte, call [`next_sync`](ParseError::next_sync).
+  InvalidChecksum {
+    buf: &'b [u8],
+    expected: u16,
+    actual: u16,
+  },
+  InvalidField {
+    buf: &'b [u8],
+    packet: &'static str, // TODO: Use enum instead of `str`.
+    field: &'static str,
+  },
+  InvalidLen {
+    buf: &'b [u8],
+    class_id: u8,
+    msg_id: u8,
+    expected: usize,
+    actual: usize,
+  }
+}
+
+impl<'b> ParseError<'b> {
+  /// Get the position of the next sync byte, if any.
+  pub fn next_sync(&self) -> Option<usize> {
+    match self {
+      Self::InvalidHeader { buf } |
+      Self::InvalidChecksum { buf, .. } |
+      Self::InvalidField { buf, .. } |
+      Self::InvalidLen { buf, .. } => {
+        // Skip first byte, since it may already be a sync byte.
+        let mut pos = 1;
+        let mut it = buf.iter().skip(pos).copied().peekable();
+
+        while let Some(b1) = it.next() {
+          if b1 == SYNC_CHAR_1 {
+            match it.peek() {
+              Some(b2) => if *b2 == SYNC_CHAR_2 {
+                return Some(pos)
+              },
+              None => return Some(pos),
+            }
+          }
+
+          pos += 1;
+        }
+
+        None
+      },
+      _ => None,
+    }
+  }
+}
+
+impl<'b> PacketRef<'b> {
+  pub fn parse(buf: &'b [u8]) -> Result<(Self, usize), ParseError> {
+    const SYNC_LEN: usize = 2;
+    const HEADER_LEN: usize = 4;
+    const PAYLOAD_OFFSET: usize = SYNC_LEN + HEADER_LEN;
+    const CHECKSUM_LEN: usize = 2;
+
+    // Sync bytes, class ID, message ID, payload length and checksum.
+    let mut bytes_needed = SYNC_LEN + HEADER_LEN + CHECKSUM_LEN;
+
+    let mut get_byte = |n| {
+      match buf.get(n) {
+        Some(b) => {
+          bytes_needed -= 1;
+          Ok(*b)
+        },
+        None => return Err(ParseError::Incomplete { bytes_needed }),
+      }
+    };
+
+    if get_byte(0)? != SYNC_CHAR_1 || get_byte(1)? != SYNC_CHAR_2 {
+      return Err(ParseError::InvalidHeader { buf })
+    }
+
+    let class_id = get_byte(2)?;
+    let msg_id = get_byte(3)?;
+
+    let payload_len = usize::from(u16::from_le_bytes([
+      get_byte(4)?,
+      get_byte(5)?,
+    ]));
+
+    if payload_len > usize::from(MAX_PAYLOAD_LEN) {
+      return Err(ParseError::InvalidLen { buf, class_id, msg_id, expected: usize::from(MAX_PAYLOAD_LEN), actual: payload_len })
+    }
+
+    bytes_needed += payload_len;
+
+    let payload = buf.get(PAYLOAD_OFFSET..(PAYLOAD_OFFSET + payload_len));
+    let expected_checksum = buf.get(PAYLOAD_OFFSET + payload_len).zip(buf.get(PAYLOAD_OFFSET + payload_len + 1))
+      .map(|(b1, b2)| u16::from_le_bytes([*b1, *b2]));
+
+    let (payload, expected_checksum) = match payload.zip(expected_checksum) {
+      Some((buf, checksum)) => (buf, checksum),
+      None => return Err(ParseError::Incomplete { bytes_needed: bytes_needed - buf[PAYLOAD_OFFSET..].len() })
+    };
+
+    let mut checksummer = crate::parser::UbxChecksumCalc::new();
+    checksummer.update(&buf[SYNC_LEN..(SYNC_LEN + HEADER_LEN + payload_len)]);
+    let actual_checksum = checksummer.result();
+
+    if actual_checksum != expected_checksum {
+      return Err(ParseError::InvalidChecksum { buf, expected: expected_checksum, actual: actual_checksum })
+    }
+
+    match match_packet(class_id, msg_id, payload) {
+      Ok(packet) => Ok((packet, SYNC_LEN + HEADER_LEN + payload_len + CHECKSUM_LEN)),
+      Err(ParserError::InvalidField { packet, field }) => Err(ParseError::InvalidField { buf, packet, field }),
+      Err(ParserError::InvalidPacketLen { expect, got, .. }) => Err(ParseError::InvalidLen { buf, class_id, msg_id, expected: expect, actual: got }),
+      _ => unreachable!(), // TODO: Change code generation to use `ParseError` instead of `ParserError`.
+    }
+  }
+}

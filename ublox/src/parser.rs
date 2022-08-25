@@ -395,29 +395,29 @@ impl<'a, T: UnderlyingBuffer> Drop for DualBuffer<'a, T> {
 
 /// For ubx checksum on the fly
 #[derive(Default)]
-struct UbxChecksumCalc {
+pub struct UbxChecksumCalc {
     ck_a: u8,
     ck_b: u8,
 }
 
 impl UbxChecksumCalc {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { ck_a: 0, ck_b: 0 }
     }
 
-    fn update(&mut self, bytes: &[u8]) {
-        let mut a = self.ck_a;
-        let mut b = self.ck_b;
-        for byte in bytes.iter() {
-            a = a.overflowing_add(*byte).0;
-            b = b.overflowing_add(a).0;
-        }
-        self.ck_a = a;
-        self.ck_b = b;
+    pub fn update_byte(&mut self, byte: u8) {
+        self.ck_a = self.ck_a.wrapping_add(byte);
+        self.ck_b = self.ck_b.wrapping_add(self.ck_a);
     }
 
-    fn result(self) -> (u8, u8) {
-        (self.ck_a, self.ck_b)
+    pub fn update(&mut self, bytes: &[u8]) {
+        for &byte in bytes.iter() {
+            self.update_byte(byte)
+        }
+    }
+
+    pub fn result(self) -> u16 {
+        u16::from_le_bytes([self.ck_a, self.ck_b])
     }
 }
 
@@ -448,17 +448,18 @@ impl<'a, T: UnderlyingBuffer> ParserIter<'a, T> {
             return None;
         }
         let mut checksummer = UbxChecksumCalc::new();
-        let (a, b) = self.buf.peek_raw(2..(4 + pack_len + 2));
+        let (a, b) = self.buf.peek_raw(2..(6 + pack_len));
         checksummer.update(a);
         checksummer.update(b);
-        let (ck_a, ck_b) = checksummer.result();
+        let checksum = checksummer.result();
 
-        let (expect_ck_a, expect_ck_b) = (self.buf[6 + pack_len], self.buf[6 + pack_len + 1]);
-        if (ck_a, ck_b) != (expect_ck_a, expect_ck_b) {
+        let expected_checksum =
+            u16::from_le_bytes([self.buf[6 + pack_len], self.buf[6 + pack_len + 1]]);
+        if checksum != expected_checksum {
             self.buf.drain(2);
             return Some(Err(ParserError::InvalidChecksum {
-                expect: u16::from_le_bytes([expect_ck_a, expect_ck_b]),
-                got: u16::from_le_bytes([ck_a, ck_b]),
+                expect: expected_checksum,
+                got: checksum,
             }));
         }
         let class_id = self.buf[2];
