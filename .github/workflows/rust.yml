@@ -11,9 +11,14 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        rust-version: 1.57.0
+        feature-args:
+          - ''
+          - --no-default-features --features alloc
+          - --no-default-features
     steps:
     - uses: actions/checkout@v2
     - name: Install libudev
@@ -21,10 +26,10 @@ jobs:
     - name: Install MSRV
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: 1.57.0
+        toolchain: ${ matrix.rust-version }
         override: true
         components: rustfmt, clippy
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --verbose ${{ matrix.feature-args }}
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --verbose ${{ matrix.feature-args }}
