@@ -3,6 +3,7 @@ mod packets;
 mod types;
 
 use crate::error::MemWriterError;
+use crate::parser::UbxChecksumCalc;
 pub use packets::*;
 pub use types::*;
 
@@ -16,39 +17,6 @@ pub trait UbxPacketMeta {
 
 pub(crate) const SYNC_CHAR_1: u8 = 0xb5;
 pub(crate) const SYNC_CHAR_2: u8 = 0x62;
-
-/// The checksum is calculated over the packet, starting and including
-/// the CLASS field, up until, but excluding, the checksum field.
-/// So slice should starts with class id.
-/// Return ck_a and ck_b
-pub(crate) fn ubx_checksum(data: &[u8]) -> (u8, u8) {
-    let mut ck_a = 0_u8;
-    let mut ck_b = 0_u8;
-    for byte in data {
-        ck_a = ck_a.overflowing_add(*byte).0;
-        ck_b = ck_b.overflowing_add(ck_a).0;
-    }
-    (ck_a, ck_b)
-}
-
-/// For ubx checksum on the fly
-#[derive(Default)]
-struct UbxChecksumCalc {
-    ck_a: u8,
-    ck_b: u8,
-}
-
-impl UbxChecksumCalc {
-    fn update(&mut self, chunk: &[u8]) {
-        for byte in chunk {
-            self.ck_a = self.ck_a.overflowing_add(*byte).0;
-            self.ck_b = self.ck_b.overflowing_add(self.ck_a).0;
-        }
-    }
-    fn result(self) -> (u8, u8) {
-        (self.ck_a, self.ck_b)
-    }
-}
 
 /// Abstraction for buffer creation/reallocation
 /// to storing packet
@@ -124,9 +92,10 @@ impl UbxPacketRequest {
             0,
             0,
         ];
-        let (ck_a, ck_b) = ubx_checksum(&ret[2..6]);
-        ret[6] = ck_a;
-        ret[7] = ck_b;
+        let mut checksum_calc = UbxChecksumCalc::new();
+        checksum_calc.update(&ret[2..6]);
+        let checksum = checksum_calc.result();
+        [ret[6], ret[7]] = checksum.to_le_bytes();
         ret
     }
 }

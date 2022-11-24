@@ -371,9 +371,14 @@ fn test_ubx_packet_send() {
                     ret[13usize] = bytes[3usize];
                     let bytes = self.a.to_le_bytes();
                     ret[14usize] = bytes[0usize];
-                    let (ck_a, ck_b) = ubx_checksum(&ret[2..(Self::PACKET_LEN - 2)]);
+
+                    let mut checksum_calc = UbxChecksumCalc::new();
+                    checksum_calc.update(&ret[2..(Self::PACKET_LEN - 2)]);
+
+                    let [ck_a, ck_b] = checksum_calc.result().to_le_bytes();
                     ret[Self::PACKET_LEN - 2] = ck_a;
                     ret[Self::PACKET_LEN - 1] = ck_b;
+
                     ret
                 }
             }
@@ -396,7 +401,7 @@ fn test_ubx_packet_send() {
                         len_bytes[1],
                     ];
                     out.write(&header)?;
-                    let mut checksum_calc = UbxChecksumCalc::default();
+                    let mut checksum_calc = UbxChecksumCalc::new();
                     checksum_calc.update(&header[2..]);
                     let bytes = self.itow.to_le_bytes();
                     out.write(&bytes)?;

@@ -394,18 +394,18 @@ impl<'a, T: UnderlyingBuffer> Drop for DualBuffer<'a, T> {
 }
 
 /// For ubx checksum on the fly
-#[derive(Default)]
 pub struct UbxChecksumCalc {
     ck_a: u8,
     ck_b: u8,
 }
 
 impl UbxChecksumCalc {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { ck_a: 0, ck_b: 0 }
     }
 
-    pub fn update_byte(&mut self, byte: u8) {
+    #[inline]
+    fn update_byte(&mut self, byte: u8) {
         self.ck_a = self.ck_a.wrapping_add(byte);
         self.ck_b = self.ck_b.wrapping_add(self.ck_a);
     }
@@ -447,11 +447,11 @@ impl<'a, T: UnderlyingBuffer> ParserIter<'a, T> {
             }
             return None;
         }
-        let mut checksummer = UbxChecksumCalc::new();
+        let mut checksum_calc = UbxChecksumCalc::new();
         let (a, b) = self.buf.peek_raw(2..(6 + pack_len));
-        checksummer.update(a);
-        checksummer.update(b);
-        let checksum = checksummer.result();
+        checksum_calc.update(a);
+        checksum_calc.update(b);
+        let checksum = checksum_calc.result();
 
         let expected_checksum =
             u16::from_le_bytes([self.buf[6 + pack_len], self.buf[6 + pack_len + 1]]);

@@ -74,7 +74,7 @@ extern crate serde;
 
 pub use crate::{
     error::{DateTimeError, MemWriterError, ParserError},
-    parser::{FixedLinearBuffer, Parser, ParserIter, UnderlyingBuffer},
+    parser::{FixedLinearBuffer, Parser, ParserIter, UnderlyingBuffer, UbxChecksumCalc},
     ubx_packets::*,
 };
 

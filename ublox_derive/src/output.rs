@@ -407,18 +407,24 @@ pub fn generate_send_code_for_packet(pack_descr: &PackDesc) -> TokenStream {
                     let mut ret = [0u8; Self::PACKET_LEN];
                     ret[0] = SYNC_CHAR_1;
                     ret[1] = SYNC_CHAR_2;
+
                     ret[2] = #main_name::CLASS;
                     ret[3] = #main_name::ID;
+
                     let pack_len_bytes = #packet_payload_size_u16 .to_le_bytes();
                     ret[4] = pack_len_bytes[0];
                     ret[5] = pack_len_bytes[1];
                     #(#pack_fields);*;
-                    let (ck_a, ck_b) = ubx_checksum(&ret[2..(Self::PACKET_LEN - 2)]);
-                    ret[Self::PACKET_LEN - 2] = ck_a;
-                    ret[Self::PACKET_LEN - 1] = ck_b;
+
+                    let mut checksummer = UbxChecksumCalc::new();
+                    checksummer.update(&ret[2..(Self::PACKET_LEN - 2)]);
+                    let checksum = checksummer.result();
+                    [ret[Self::PACKET_LEN - 2], ret[Self::PACKET_LEN - 1]] = checksum.to_le_bytes();
+
                     ret
                 }
             }
+
             impl From<#payload_struct> for [u8; #packet_size] {
                 fn from(x: #payload_struct) -> Self {
                     x.into_packet_bytes()
@@ -432,11 +438,15 @@ pub fn generate_send_code_for_packet(pack_descr: &PackDesc) -> TokenStream {
                     let len_bytes = #packet_payload_size_u16 .to_le_bytes();
                     let header = [SYNC_CHAR_1, SYNC_CHAR_2, #main_name::CLASS, #main_name::ID, len_bytes[0], len_bytes[1]];
                     out.write(&header)?;
-                    let mut checksum_calc = UbxChecksumCalc::default();
+
+                    let mut checksum_calc = UbxChecksumCalc::new();
                     checksum_calc.update(&header[2..]);
+
                     #(#write_fields);*;
-                    let (ck_a, ck_b) = checksum_calc.result();
-                    out.write(&[ck_a, ck_b])?;
+
+                    let checksum = checksum_calc.result();
+                    out.write(&checksum.to_le_bytes())?;
+
                     Ok(())
                 }
             }
@@ -473,9 +483,10 @@ pub fn generate_send_code_for_packet(pack_descr: &PackDesc) -> TokenStream {
                   out[4] = len_bytes[0];
                   out[5] = len_bytes[1];
 
-                  let (ck_a, ck_b) = ubx_checksum(&out[2..]);
-                  out.extend(core::iter::once(ck_a));
-                  out.extend(core::iter::once(ck_b));
+                  let mut checksum_calc = UbxChecksumCalc::new();
+                  checksum_calc.update(&out[2..]);
+                  let checksum = checksum_calc.result();
+                  out.extend(checksum.to_le_bytes());
               }
           }
         })

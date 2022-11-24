@@ -16,9 +16,10 @@ use crate::error::{MemWriterError, ParserError};
 #[cfg(feature = "serde")]
 use crate::serde::ser::SerializeMap;
 use crate::ubx_packets::packets::mon_ver::is_cstr_valid;
+use crate::parser::UbxChecksumCalc;
 
 use super::{
-    ubx_checksum, MemWriter, Position, UbxChecksumCalc, UbxPacketCreator, UbxPacketMeta,
+    MemWriter, Position, UbxPacketCreator, UbxPacketMeta,
     UbxUnknownPacketRef, SYNC_CHAR_1, SYNC_CHAR_2,
 };
 
@@ -786,7 +787,7 @@ impl Default for OdoProfile {
     }
 }
 
-/// Configure Jamming interference monitoring 
+/// Configure Jamming interference monitoring
 #[ubx_packet_recv_send]
 #[ubx(class = 0x06, id = 0x39, fixed_payload_len = 8)]
 struct CfgItfm {
@@ -827,7 +828,7 @@ impl Default for CfgItfmConfig {
 impl CfgItfmConfig {
     pub fn new(enable: bool, bb_threshold: u32, cw_threshold: u32) -> Self {
         Self {
-            enable, 
+            enable,
             bb_threshold: bb_threshold.into(),
             cw_threshold: cw_threshold.into(),
             algorithm_bits: CfgItfmAlgoBits::default(),
@@ -836,7 +837,7 @@ impl CfgItfmConfig {
 
     const fn into_raw(self) -> u32 {
         (self.enable as u32)<<31
-            | self.cw_threshold.into_raw() 
+            | self.cw_threshold.into_raw()
                 | self.bb_threshold.into_raw()
                     | self.algorithm_bits.into_raw()
     }
@@ -955,8 +956,8 @@ impl CfgItfmConfig2 {
     }
 
     const fn into_raw(self) -> u32 {
-        ((self.scan_aux_bands as u32)<< 14) 
-            | self.general.into_raw() 
+        ((self.scan_aux_bands as u32)<< 14)
+            | self.general.into_raw()
                 | self.antenna.into_raw() as u32
     }
 }
@@ -1009,12 +1010,12 @@ impl From<u32> for CfgItfmGeneralBits {
 pub enum CfgItfmAntennaSettings {
     /// Type of Antenna is not known
     Unknown = 0,
-    /// Active antenna 
+    /// Active antenna
     Active = 1,
     /// Passive antenna
     Passive = 2,
 }
-        
+
 impl From<u32> for CfgItfmAntennaSettings {
     fn from(cfg: u32) -> Self {
         let cfg = (cfg & 0x3000) >> 12;
@@ -3706,9 +3707,9 @@ impl<'b> PacketRef<'b> {
       None => return Err(ParseError::Incomplete { bytes_needed: bytes_needed - buf[PAYLOAD_OFFSET..].len() })
     };
 
-    let mut checksummer = crate::parser::UbxChecksumCalc::new();
-    checksummer.update(&buf[SYNC_LEN..(SYNC_LEN + HEADER_LEN + payload_len)]);
-    let actual_checksum = checksummer.result();
+    let mut checksum_calc = UbxChecksumCalc::new();
+    checksum_calc.update(&buf[SYNC_LEN..(SYNC_LEN + HEADER_LEN + payload_len)]);
+    let actual_checksum = checksum_calc.result();
 
     if actual_checksum != expected_checksum {
       return Err(ParseError::InvalidChecksum { buf, expected: expected_checksum, actual: actual_checksum })
